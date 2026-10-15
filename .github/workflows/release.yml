@@ -1,0 +1,39 @@
+name: Release
+
+# Push a version tag (git tag v0.2.0 && git push origin v0.2.0) to build a downloadable
+# Lisper.zip and attach it to a GitHub release. The app is ad-hoc signed, not notarized
+# (that needs a paid Apple Developer account) — README.md tells users how to open it.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15   # matches Package.swift platforms: [.macOS(.v15)]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: swift run LisperKitTests
+
+      - name: Build universal app
+        run: LISPER_VERSION="${GITHUB_REF_NAME#v}" ./scripts/build.sh --dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPO="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          cat > notes.md <<EOF
+          **Install:** download \`Lisper.zip\` below, unzip it, and drag \`Lisper.app\` into your Applications folder. Needs macOS 15 (Sequoia) or later and a free Groq API key.
+
+          **First launch:** macOS says it can't verify the app (it isn't from the App Store). Click **Done**, then open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the Lisper message.
+
+          Full setup steps: [README]($REPO#readme) · What happens to your data: [PRIVACY.md]($REPO/blob/main/PRIVACY.md)
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/Lisper.zip \
+            --title "Lisper $GITHUB_REF_NAME" \
+            --notes-file notes.md

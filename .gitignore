@@ -1,0 +1,18 @@
+.build/
+dist/
+*.xcodeproj
+.DS_Store
+.swiftpm/
+Resources/AppIcon.iconset/
+
+# Personal data and local tooling — never commit
+.claude/
+.superpowers/
+.env
+.env.*
+*.wav
+*.sqlite
+*.sqlite-*
+*.jsonl
+*.p12
+*.pem
