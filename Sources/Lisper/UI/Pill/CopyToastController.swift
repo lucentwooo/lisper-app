@@ -9,12 +9,10 @@ final class CopyToastController {
     private var panel: NSPanel?
     private var hideTask: DispatchWorkItem?
 
-    /// `pasted`: the text was also pasted (we just couldn't confirm it landed).
-    func show(text: String, pasted: Bool) {
+    func show(text: String) {
         dismiss()
         let view = CopyToast(
             text: text,
-            headline: pasted ? "Didn't land? Copy it" : "No text box — copy it",
             onCopy: { [weak self] in
                 Clipboard.copy(text)
                 self?.scheduleHide(after: 0.9)
@@ -41,7 +39,7 @@ final class CopyToastController {
             p.setFrameOrigin(NSPoint(x: f.midX - p.frame.width / 2, y: f.minY + 70))
         }
         p.orderFrontRegardless()
-        scheduleHide(after: pasted ? 6 : 15)
+        scheduleHide(after: 12)
     }
 
     func dismiss() {
@@ -68,14 +66,13 @@ enum Clipboard {
 
 private struct CopyToast: View {
     let text: String
-    let headline: String
     let onCopy: () -> Void
     let onDismiss: () -> Void
     @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(headline).sectionLabel()
+            Text("No text box — copy it").sectionLabel()
             Text(text)
                 .font(.system(size: 12)).foregroundColor(Theme.textSecondary)
                 .lineLimit(3).lineSpacing(2)

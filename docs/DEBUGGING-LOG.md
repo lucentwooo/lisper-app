@@ -32,6 +32,7 @@ and the fast path to the real cause. The goal is that the next weird bug takes m
 | **Cleanup got dumb** — fillers like "you know" mangle sentences, dictionary/proper nouns ignored, no punctuation smarts — but nothing errors | The **LLM cleanup is failing and silently falling back to rules**. Check `cleanupUsed` by day: `sqlite3 ~/Library/Application\ Support/Lisper/lisper.sqlite "select substr(startedAt,1,10), cleanupUsed, count(*) from sessions group by 1,2"`. All `rules` = the LLM is dead; `cleanupError` in `dictations.jsonl` (since 2026-10-10) says why. First suspect: **Groq retired the chat model** (console.groq.com/docs/deprecations). → [2026-10-10b](#2026-10-10b--you-know-what-i-mean-comes-out-as-what-and-the-dictionary-does-nothing) |
 | **Last phrase (or first words) missing**, clean room, no click — often a sentence that trails off after a loud start | The trimmer's `peak * 0.1` term: plosive bursts set the peak at ~0.22, so the bar (0.022) sat above a trailing-off sentence at ~0.008 that was still 16x the room tone. Fixed 2026-10-12 with a noise-floor-relative quiet-speech tier + 1.0 s trailing pad. **Prove it first:** cut the region the trimmer discards out of `audio/<id>.wav` and transcribe it locally (`whisper-cli`, model in `~/.cache/hyperframes/whisper/models/`) — words in the cut = trimmer bug. Words present in what was SENT but not in `rawTranscript` = large-v3 stopping early (`guardsFired` has `endingRecovered` when the turbo ending-check put them back; `endingCheckFailed` / `endingCheckTimedOut` when the check errored or was too slow; nothing when it was skipped — takes > 60 s, no check model, or the primary failed). → [2026-10-12](#2026-10-12--it-doesnt-pick-up-the-last-phrase-i-say) |
 | **End of a take missing** (or a quiet take called "too short") and the clip had a **click / bump / pop** in it | The speech threshold was 10% of the clip's single loudest frame, so one 50 ms transient lifted it above real speech and the trimmer cut everything after the last frame that cleared it. Fixed 2026-10-10: `AudioGate.robustPeak` sets the loudest ~150 ms aside. Replay `audio/<id>.wav` frame RMS to confirm (a top frame 5-10x the next ones = transient). Commit `5addff0`. |
+| **Copy pop-up didn't appear** (no text box) or appears when the paste DID land | `/tmp/lisper-hotkey.log` → `paste target:` (pre-paste decision) and `paste check 1/2:` (read-back) lines per take. Measure an app with the DEBUG probe hook (`FocusProbeDebugHook`) before special-casing it. → [2026-10-15](#2026-10-15--nothing-popped-up-copy-pop-up-when-theres-no-text-box) |
 | Recording works but **text never pastes** | Accessibility (`AXIsProcessTrusted`) for the *current signed* binary; `TextInserter` synthetic ⌘V path; saved/restored pasteboard. |
 | **Fn does nothing at all** (no pill, no sound) | `AXIsProcessTrusted()` is **false** — global monitors install but receive nothing. The System Settings toggle can read ON but be stale. Confirm at runtime (instrument launch); `tccutil reset Accessibility com.lucent.lisper`, relaunch, re-grant. Grants **do** survive rebuilds with the stable `Lisper Dev` cert. |
 | **"All tests pass"** but nothing seems exercised | `swift test` executes **nothing** here (CLT-only, no XCTest). Use `swift run LisperKitTests` (full suite; no `--filter`). |
@@ -583,6 +584,31 @@ and the fast path to the real cause. The goal is that the next weird bug takes m
   normal. Judge speech against the noise floor. And "transcript ends early" has two separable
   causes. Transcribe the audio the trimmer **sent** as well as the **full** wav: words in full
   but not in sent = trimmer, words in sent but not in `rawTranscript` = the ASR.
+
+### 2026-10-15 — "nothing popped up" (Copy pop-up when there's no text box)
+
+- **Symptom:** the new one-click Copy pop-up (PR #12) never appeared after dictating with no
+  text box selected.
+- **Root cause:** the pre-paste decision exempted every Chromium/Electron app ("their AX tree
+  is often off, can't trust a non-text answer"). Every real take was in one (Chrome, T3 Code,
+  …), so the pop-up was unreachable exactly where it was needed. The exemption was a guess:
+  measured, Chrome reports focus accurately to Lisper — but it reports a text cursor
+  (`AXSelectedTextRange`) even on a plain page body, so no pre-paste signal separates a text
+  box from a page.
+- **Red herring:** "the change isn't live". It was — `/tmp/lisper-hotkey.log` had a
+  `paste target:` line for every take, all `chromium=true -> paste=true offerCopy=false`.
+- **Diagnosis that worked:** a DEBUG-only harness (`FocusProbeDebugHook`): Lisper has the
+  Accessibility trust a terminal lacks, so a distributed notification makes it log what it sees
+  in the frontmost app. `/tmp` test pages (autofocused input / textarea / contenteditable /
+  bare page) opened in Chrome and Safari gave the role/value table in seconds per state.
+- **Fix:** paste, then **read the focused element back** (`PasteLandedCheck`, checked at
+  0.5 s and 1.2 s): words found = landed; not found = they went nowhere → Copy pop-up. Chrome
+  text fields, textareas and contenteditable all report their text; a page body reports
+  `AXWebArea` without it. Native apps with clearly non-text focus (Finder list) still skip
+  the paste up front. Each take logs `paste check N: … -> offerCopy=` (no text content).
+- **Lesson:** **verify the outcome instead of predicting it.** Whether a paste landed is
+  observable afterwards; guessing it beforehand from AX roles fails in Chromium. And measure an
+  app's AX behaviour (the probe hook) before writing an exemption for it.
 
 ## Entry template
 

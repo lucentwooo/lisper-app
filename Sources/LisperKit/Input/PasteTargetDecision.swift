@@ -8,8 +8,8 @@ public struct FocusFacts: Equatable, Sendable {
     /// The element has a text cursor/selection (`AXSelectedTextRange`) or a settable value —
     /// true for web editors that report a generic role.
     public var hasTextCursor: Bool
-    /// Chromium/Electron apps often keep their accessibility tree off, so a "not a text box"
-    /// answer from them can't be trusted.
+    /// Chromium/Electron apps report a text cursor even on a plain page body, so their
+    /// pre-paste answer can't tell a text box from a page.
     public var isChromiumBased: Bool
 
     public init(hasFocusedElement: Bool, role: String?, hasTextCursor: Bool, isChromiumBased: Bool) {
@@ -18,18 +18,13 @@ public struct FocusFacts: Equatable, Sendable {
     }
 }
 
-/// Where a finished take goes: pasted at the cursor, offered as a one-click copy, or both.
+/// Before pasting: should the take be pasted, or offered as a one-click copy instead?
 ///
-/// Pasting with no text box focused sends ⌘V into nothing, then restores the old clipboard —
-/// the words vanish until dug out of Home. So when the focus is clearly NOT a text box, offer a
-/// copy instead. When unsure, paste exactly as before: a missed paste is worse than a spare
-/// prompt, and a spare prompt on every take would be worse still.
+/// Only a NATIVE app whose focus is clearly not a text box (a Finder list, a button) skips the
+/// paste — there ⌘V would just beep. Everything else is pasted and then read back
+/// (PasteLandedCheck), which is what catches a Chrome/Electron page with no text box.
 public enum PasteTargetDecision {
-    public struct Outcome: Equatable, Sendable {
-        public let paste: Bool
-        public let offerCopy: Bool
-        public init(paste: Bool, offerCopy: Bool) { self.paste = paste; self.offerCopy = offerCopy }
-    }
+    public enum Outcome: Equatable, Sendable { case paste, offerCopyInstead }
 
     static let textRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
 
@@ -42,13 +37,33 @@ public enum PasteTargetDecision {
     ]
 
     public static func decide(_ f: FocusFacts) -> Outcome {
-        if f.hasTextCursor || f.role.map(textRoles.contains) == true {
-            return Outcome(paste: true, offerCopy: false)
-        }
-        if f.isChromiumBased { return Outcome(paste: true, offerCopy: false) }
-        // Nothing focused is ambiguous (some terminals expose no element): paste, and offer.
-        if !f.hasFocusedElement { return Outcome(paste: true, offerCopy: true) }
-        if let role = f.role, nonTextRoles.contains(role) { return Outcome(paste: false, offerCopy: true) }
-        return Outcome(paste: true, offerCopy: false)
+        if f.isChromiumBased || f.hasTextCursor || f.role.map(textRoles.contains) == true { return .paste }
+        if let role = f.role, nonTextRoles.contains(role) { return .offerCopyInstead }
+        return .paste
+    }
+}
+
+/// After pasting: did the words land? Read back from the focused element — if they aren't in
+/// it, they went nowhere (a web page with nothing focused, an empty window), so offer a copy.
+/// Measured in Chrome (2026-10-15): text fields, textareas and contenteditable editors report
+/// their text; a page body reports AXWebArea without it.
+public enum PasteLandedCheck {
+    /// Enough of the start of the text to recognise it, short enough that an editor's
+    /// formatting further on can't break the match.
+    static let needleLength = 30
+
+    public static func offerCopy(hasElement: Bool, role: String?, value: String?, pasted: String) -> Bool {
+        let needle = squash(String(squash(pasted).prefix(needleLength)))
+        guard !needle.isEmpty else { return false }
+        if let value { return !squash(value).contains(needle) }
+        // A text box that hides its text (a password field) can't be checked: trust the paste.
+        if let role, PasteTargetDecision.textRoles.contains(role) { return false }
+        return true
+    }
+
+    /// Collapses every run of whitespace (incl. non-breaking spaces and line breaks) to one
+    /// space, so an editor re-flowing the text doesn't read as "not there".
+    static func squash(_ s: String) -> String {
+        s.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 }

@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.install()
         menuBar.onOpenMain = { [weak self] in self?.openMainWindow() }
         menuBar.onTogglePause = { [weak self] paused in self?.hotkey.isPaused = paused }
+        #if DEBUG
+        FocusProbeDebugHook.install()
+        #endif
         menuBar.lastDictation = { [weak self] in
             try? self?.env.database.recentSessions(limit: 1).first?.cleanedText
         }
@@ -361,17 +364,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // No text box focused: offer a one-click copy instead of pasting into nothing.
                 let focus = FocusedTextProbe.facts()
                 let target = PasteTargetDecision.decide(focus)
-                HotkeyTrace.log("paste target: role=\(focus.role ?? "none") cursor=\(focus.hasTextCursor) chromium=\(focus.isChromiumBased) -> paste=\(target.paste) offerCopy=\(target.offerCopy)")
-                if !target.paste {
+                HotkeyTrace.log("paste target: role=\(focus.role ?? "none") cursor=\(focus.hasTextCursor) chromium=\(focus.isChromiumBased) -> \(target)")
+                if target == .offerCopyInstead {
                     self.pill.show(phase: outcome.cleanupNotice.map { .error($0) } ?? .success)
-                    self.copyToast.show(text: outcome.cleanedText, pasted: false)
+                    self.copyToast.show(text: outcome.cleanedText)
                 } else if TextInserter.insert(outcome.cleanedText) {
                     // Pasted, but with basic cleanup for a reason the user can fix — say so
                     // instead of degrading silently (DEBUGGING-LOG 2026-10-10b).
                     self.pill.show(phase: outcome.cleanupNotice.map { .error($0) } ?? .success)
                     self.corrections.beginWatch(insertedText: outcome.cleanedText,
                                                 knownTerms: self.env.settingsStore.settings.dictionaryTerms)
-                    if target.offerCopy { self.copyToast.show(text: outcome.cleanedText, pasted: true) }
+                    self.offerCopyIfPasteMissed(outcome.cleanedText)
                 } else if !PermissionsService.accessibilityGranted {
                     if !self.axPromptShown {
                         self.axPromptShown = true
@@ -389,6 +392,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 self.pill.show(phase: .error("Couldn't transcribe — check connection/key"))
             }
+        }
+    }
+
+    /// Reads the focused element back after a paste; if the words aren't there, they went
+    /// nowhere (e.g. a web page with no text box focused) — offer a one-click copy. Checked
+    /// twice: Chrome can take a moment to reflect a paste in what it reports.
+    private func offerCopyIfPasteMissed(_ text: String, attempt: Int = 1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 1 ? 0.5 : 0.7)) { [weak self] in
+            guard let self else { return }
+            let read = FocusedTextProbe.focusedText()
+            let offer = PasteLandedCheck.offerCopy(hasElement: read.hasElement, role: read.role,
+                                                   value: read.value, pasted: text)
+            HotkeyTrace.log("paste check \(attempt): role=\(read.role ?? "none") valueReadable=\(read.value != nil) -> offerCopy=\(offer)")
+            guard offer else { return }
+            if attempt == 1 { self.offerCopyIfPasteMissed(text, attempt: 2) }
+            else { self.copyToast.show(text: text) }
         }
     }
 

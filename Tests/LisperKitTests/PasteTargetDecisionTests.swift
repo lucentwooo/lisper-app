@@ -1,9 +1,9 @@
 import Testing
 @testable import LisperKit
 
-/// A take that finishes with no text box focused used to paste into nothing and then restore
-/// the old clipboard — the words were gone until you dug them out of Home. When the focused
-/// element is clearly not a text box, offer a one-click copy instead of pasting.
+/// Before pasting: when a NATIVE app's focus is clearly not a text box (a Finder list, a
+/// button), ⌘V would only beep — skip it and offer a one-click copy. Everything else is
+/// pasted and then checked (PasteLandedCheck).
 @Suite struct PasteTargetDecisionTests {
 
     private func facts(element: Bool = true, role: String? = nil, cursor: Bool = false,
@@ -12,45 +12,36 @@ import Testing
                    isChromiumBased: chromium)
     }
 
-    @Test func testTextFieldPastesWithoutOffer() {
+    @Test func testTextFieldPastes() {
         for role in ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"] {
-            #expect(PasteTargetDecision.decide(facts(role: role)) == .init(paste: true, offerCopy: false))
+            #expect(PasteTargetDecision.decide(facts(role: role)) == .paste)
         }
     }
 
     /// A web editor (contenteditable) often reports a generic role but has a text cursor.
     @Test func testGenericRoleWithTextCursorPastes() {
-        #expect(PasteTargetDecision.decide(facts(role: "AXGroup", cursor: true))
-                == .init(paste: true, offerCopy: false))
+        #expect(PasteTargetDecision.decide(facts(role: "AXGroup", cursor: true)) == .paste)
     }
 
-    /// Clearly not a text box (a web page body, a Finder list, a button): don't paste into
-    /// nothing — offer the copy.
-    @Test func testClearlyNonTextFocusOffersCopyInsteadOfPasting() {
+    @Test func testClearlyNonTextFocusInNativeAppOffersCopyInstead() {
         for role in ["AXWebArea", "AXList", "AXOutline", "AXTable", "AXScrollArea", "AXButton", "AXGroup"] {
-            #expect(PasteTargetDecision.decide(facts(role: role)) == .init(paste: false, offerCopy: true))
+            #expect(PasteTargetDecision.decide(facts(role: role)) == .offerCopyInstead)
         }
     }
 
-    /// Chromium/Electron apps (Slack, VS Code, Chrome) often hide their accessibility tree, so
-    /// a non-text answer can't be trusted there — paste exactly as before, no prompt.
-    @Test func testChromiumAppsAlwaysPasteWithoutOffer() {
-        #expect(PasteTargetDecision.decide(facts(role: "AXGroup", chromium: true))
-                == .init(paste: true, offerCopy: false))
-        #expect(PasteTargetDecision.decide(facts(element: false, chromium: true))
-                == .init(paste: true, offerCopy: false))
+    /// Chromium reports a text cursor on a plain page body, so its pre-paste answer isn't
+    /// trusted: paste, and let the read-back decide.
+    @Test func testChromiumAppsAlwaysPaste() {
+        #expect(PasteTargetDecision.decide(facts(role: "AXWebArea", cursor: true, chromium: true)) == .paste)
+        #expect(PasteTargetDecision.decide(facts(role: "AXGroup", chromium: true)) == .paste)
+        #expect(PasteTargetDecision.decide(facts(element: false, chromium: true)) == .paste)
     }
 
-    /// No focused element at all is ambiguous (some terminals expose none): still paste, but
-    /// offer the copy in case it went nowhere.
-    @Test func testNoFocusedElementPastesAndOffersCopy() {
-        #expect(PasteTargetDecision.decide(facts(element: false)) == .init(paste: true, offerCopy: true))
-    }
-
-    /// An unrecognised role (or a bare window) keeps today's behaviour.
-    @Test func testUnknownRoleKeepsPasting() {
+    /// No focused element (some terminals expose none) and unknown roles: paste as before.
+    @Test func testAmbiguousFocusPastes() {
+        #expect(PasteTargetDecision.decide(facts(element: false)) == .paste)
         for role in ["AXWindow", "AXSomethingNew"] {
-            #expect(PasteTargetDecision.decide(facts(role: role)) == .init(paste: true, offerCopy: false))
+            #expect(PasteTargetDecision.decide(facts(role: role)) == .paste)
         }
     }
 }

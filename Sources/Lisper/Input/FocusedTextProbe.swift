@@ -30,6 +30,23 @@ enum FocusedTextProbe {
                           isChromiumBased: chromium)
     }
 
+    /// The focused element's role and text value, read fresh — used after a paste to check
+    /// the words actually landed. `value` is nil when the element exposes no readable text.
+    static func focusedText() -> (hasElement: Bool, role: String?, value: String?) {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return (false, nil, nil) }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(axApp, 0.25)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return (false, nil, nil) }
+        let element = focused as! AXUIElement
+        var role: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+        var value: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value)
+        return (true, role as? String, value as? String)
+    }
+
     private static var chromiumCache: [String: Bool] = [:]
 
     /// Electron apps ship "Electron Framework"; Chromium browsers ship "<Name> Framework"
